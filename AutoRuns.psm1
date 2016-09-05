@@ -1,9 +1,15 @@
-﻿#Requires -Version 3.0
+﻿#Requires -Version 2.0
 
 Function Get-PSAutorun {
 <#
     .SYNOPSIS
         Get Autorun entries.
+		
+		Author: Emin Atac
+		Updated by: Chris Gerritz (Github @singlethreaded) (Twitter @gerritzc)
+		License: BSD 3-clause 
+		Required Dependencies: None
+		Optional Dependencies: None
      
     .DESCRIPTION
         Retrieve a list of programs configured to autostart at boot or logon.
@@ -79,7 +85,6 @@ Function Get-PSAutorun {
          Get-PSAutorun -All -ShowFileHash -VerifyDigitalSignature
 
 #>
-
     [CmdletBinding()]
     Param(
         [switch]$All,
@@ -100,80 +105,92 @@ Function Get-PSAutorun {
         [Switch]$ScheduledTasks,
         [Switch]$Winlogon,
         [Switch]$WMI,
-        [Switch]$ShowFileHash,
-        [Switch]$VerifyDigitalSignature
+        [Switch]$ShowFileHash
     )
 
 Begin {
-
     #region Helperfunctions
 
     # Courtesy of Microsoft
     # Extracted from PS 4.0 with (dir function:\Get-FileHash).Definition
-    Function Get-FileHash {
-        [CmdletBinding(DefaultParameterSetName = 'Path')]
-        Param(
-            [Parameter(Mandatory, ParameterSetName='Path', Position = 0)]
-            [System.String[]]
-            $Path,
+	Function Get-FileHash {
+		[CmdletBinding(DefaultParameterSetName = 'Path')]
+		Param(
+			[Parameter(Mandatory=$true, ParameterSetName='Path', Position = 0)]
+			[System.String[]]
+			$Path,
 
-            [Parameter(Mandatory, ParameterSetName='LiteralPath', ValueFromPipelineByPropertyName = $true)]
-            [Alias('PSPath')]
-            [System.String[]]
-            $LiteralPath,
-        
-            [ValidateSet('SHA1', 'SHA256', 'SHA384', 'SHA512', 'MACTripleDES', 'MD5', 'RIPEMD160')]
-            [System.String]
-            $Algorithm='SHA256'
-        )
-    
-        Begin {
-            # Construct the strongly-typed crypto object
-            $hasher = [System.Security.Cryptography.HashAlgorithm]::Create($Algorithm)
-        }
-        Process {
-            $pathsToProcess = @()
-        
-            if($PSCmdlet.ParameterSetName  -eq 'LiteralPath') {
-                $pathsToProcess += Resolve-Path -LiteralPath $LiteralPath | Foreach-Object ProviderPath
-            } else {
-                $pathsToProcess += Resolve-Path $Path | Foreach-Object ProviderPath
-            }
-        
-            foreach($filePath in $pathsToProcess) {
-                if(Test-Path -LiteralPath $filePath -PathType Container) {
-                    continue
-                }
-            
-                try {
-                    # Read the file specified in $FilePath as a Byte array
-                    [system.io.stream]$stream = [system.io.file]::OpenRead($FilePath)
-                
-                    # Compute file-hash using the crypto object
-                    [Byte[]] $computedHash = $hasher.ComputeHash($stream)
-                } catch [Exception] {
-                    $errorMessage = [Microsoft.PowerShell.Commands.UtilityResources]::FileReadError -f $FilePath, $_
-                    Write-Error -Message $errorMessage -Category ReadError -ErrorId 'FileReadError' -TargetObject $FilePath
-                    return
-                } finally {
-                    if($stream) {
-                        $stream.Close()
-                    }
-                }
-                        
-                # Convert to hex-encoded string
-                [string] $hash = [BitConverter]::ToString($computedHash) -replace '-',''
-                
-                $retVal = [PSCustomObject] @{
-                    Algorithm = $Algorithm.ToUpperInvariant()
-                    Hash = $hash
-                    Path = $filePath
-                }
-                $retVal.psobject.TypeNames.Insert(0, 'Microsoft.Powershell.Utility.FileHash')
-                $retVal
-            }
-        }
-    }
+			[Parameter(Mandatory=$true, ParameterSetName='LiteralPath', ValueFromPipelineByPropertyName = $true)]
+			[Alias('PSPath')]
+			[System.String[]]
+			$LiteralPath,
+		
+			[ValidateSet('SHA1', 'SHA256', 'SHA384', 'SHA512', 'MACTripleDES', 'MD5', 'RIPEMD160')]
+			[System.String]
+			$Algorithm='SHA256'
+		)
+
+		Begin {
+			# Construct the strongly-typed crypto object
+			try { 
+				$hasher = [System.Security.Cryptography.HashAlgorithm]::Create($Algorithm)
+			} catch {
+				Write-Warning "ERROR: Could not create hashing algorithm: $Algorithm"
+			}
+			
+		}
+		Process {
+			$pathsToProcess = @()
+			
+			if($PSCmdlet.ParameterSetName  -eq 'LiteralPath') {
+				$pathsToProcess += Resolve-Path -LiteralPath $LiteralPath | Foreach-Object { $_.ProviderPath }
+			} else {
+				$pathsToProcess += Resolve-Path $Path | Foreach-Object { $_.ProviderPath }
+			}
+				
+			foreach($filePath in $pathsToProcess) {
+				if ($hasher) {
+					if(Test-Path -LiteralPath $filePath -PathType Container) {
+						continue
+					}
+				
+					try {
+						# Read the file specified in $FilePath as a Byte array
+						[system.io.stream]$stream = [system.io.file]::OpenRead($FilePath)
+					
+						# Compute file-hash using the crypto object
+						[Byte[]] $computedHash = $hasher.ComputeHash($stream)
+					} catch [Exception] {
+						Write-Error -Message $_ -Category ReadError -ErrorId 'FileReadError' -TargetObject $FilePath
+						return
+					} finally {
+						if($stream) {
+							$stream.Close()
+						}
+					}
+							
+					# Convert to hex-encoded string
+					[string] $hash = [BitConverter]::ToString($computedHash) -replace '-',''
+					
+					$retVal = New-Object -Type PSCustomObject -Property @{
+						Algorithm = $Algorithm.ToUpperInvariant()
+						Hash = $hash
+						Path = $filePath
+					}
+					$retVal.psobject.TypeNames.Insert(0, 'Microsoft.Powershell.Utility.FileHash')
+					$retVal
+				} else {
+					$retVal = New-Object -Type PSCustomObject -Property @{
+						Algorithm = $Algorithm.ToUpperInvariant()
+						Hash = $null
+						Path = $filePath
+					}
+					$retVal.psobject.TypeNames.Insert(0, 'Microsoft.Powershell.Utility.FileHash')
+					$retVal		
+				}
+			}
+		}
+	}
 
     Function Get-RegValue {
     [CmdletBinding()]
@@ -208,12 +225,13 @@ Begin {
                         }
                     }
                     if ($Value) {
-                        [pscustomobject]@{
+						$Result = New-Object -TypeName pscustomobject -Property @{
                             Path = $Path
                             Item = $_
                             Value = $Value
                             Category = $Category
                         }
+						Write-Output $Result
                     }
                 }
             }
@@ -246,12 +264,12 @@ Begin {
             $ComputerName | ForEach-Object -Process {
                 $alltasks = @()
                 $Computer  = $_
-                $TaskService = New-Object -com schedule.service
                 try {
+					# This won't work on Win2k3 (schedule.service com object does not exist)
+					$TaskService = New-Object -com schedule.service
                     $null = $TaskService.Connect($Computer)
-
                 } catch {
-                    Write-Warning "Cannot connect to $Computer because $($_.Exception.Message)"
+                    Write-Warning "Cannot connect to $Computer TaskScheduler because $($_.Exception.Message)"
                     return
                 }
                 Get-SubFolder -folder '\' -recurse | ForEach-Object -Process {
@@ -294,11 +312,13 @@ Begin {
             $resultsar = @()
             $ComputerName | ForEach-Object -Process {
                 $Computer = $_
-                $TaskService = New-Object -com schedule.service
                 try {
+					# This won't work on Win2k3 (schedule.service com object does not exist)
+					$TaskService = New-Object -com schedule.service
                     $null = $TaskService.Connect($Computer)
                 } catch {
-                    Write-Warning "Failed to connect to $Computer"
+                    Write-Warning "Cannot connect to $Computer TaskScheduler because $($_.Exception.Message)"
+                    return
                 }
                 if ($TaskService.Connected) {
                     Write-Verbose -Message "Connected to the scheduler service of computer $Computer"
@@ -455,8 +475,7 @@ Begin {
             [Switch]$ScheduledTasks,
             [Switch]$Winlogon,
             [Switch]$WMI,
-            [Switch]$ShowFileHash,
-            [Switch]$VerifyDigitalSignature
+            [Switch]$ShowFileHash
 
         )
         Begin {
@@ -475,7 +494,7 @@ Begin {
                     if ($v) {
                         $v.Value | ForEach-Object {
                             if ($_ -ne '""') {
-                                [pscustomobject]@{
+                                New-Object -Type pscustomobject -Property @{
                                     Path = 'HKLM:\System\CurrentControlSet\Control\Session Manager'
                                     Item = $item
                                     Value = $_
@@ -519,7 +538,7 @@ Begin {
                                     $ClassesPath = 'HKLM:\SOFTWARE\Classes\CLSID'
                                 }
                                 $i = (Get-ItemProperty -Path "$key\ms-help" -Name 'CLSID').CLSID
-                                [pscustomobject]@{
+                                New-Object -Type pscustomobject -Property @{
                                     Path = "$key\ms-help"
                                     Item = $i
                                     Value = $(
@@ -545,7 +564,7 @@ Begin {
                     $ClassesPath =  "HKLM:\SOFTWARE\$($_)\Classes\CLSID"
                     $key = "HKLM:\SOFTWARE\$($_)\Microsoft\Windows\CurrentVersion\Explorer\ShellServiceObjects"
                     (Get-Item -Path $key).GetSubKeyNames() | ForEach-Object -Process {
-                        [pscustomobject]@{
+                        New-Object -Type pscustomobject -Property @{
                             Path = $key
                             Item = $_
                             Value = $(
@@ -567,7 +586,7 @@ Begin {
                         $ClassesPath =  "HKLM:\SOFTWARE\$($_)\Classes\CLSID"
                          (Get-Item -Path $key).GetValueNames() | ForEach-Object {
                             # Get-RegValue -Path $key -Name $_ @Category
-                            [pscustomobject]@{
+                            New-Object -Type pscustomobject -Property @{
                                 Path = $key
                                 Item = $_
                                 Value = (Get-ItemProperty -Path (Join-Path -Path $ClassesPath -ChildPath "$($_)\InprocServer32") -Name '(default)').'(default)'
@@ -619,7 +638,7 @@ Begin {
                                             }
                                         }
                                         if (Test-PAth -Path (Join-Path -Path $ClassPath -ChildPath "$($_)\InprocServer32") -PathType Container) {
-                                            [pscustomobject]@{
+                                            New-Object -Type pscustomobject -Property @{
                                                 Path = $key
                                                 Item = $_
                                                 Value = (Get-ItemProperty -Path (Join-Path -Path $ClassPath -ChildPath "$($_)\InprocServer32") -Name '(default)' -ErrorAction SilentlyContinue).'(default)'
@@ -675,7 +694,7 @@ Begin {
                     $ClassesPath =  "HKCU:\SOFTWARE\$($_)\Classes\CLSID"
                     $key = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ShellServiceObjects'
                     (Get-Item -Path $key).GetSubKeyNames() | ForEach-Object -Process {
-                        [pscustomobject]@{
+                        New-Object -Type pscustomobject -Property @{
                             Path = $key
                             Item = $_
                             Value = (Get-ItemProperty -Path (Join-Path -Path $ClassesPath -ChildPath "$($_)\InprocServer32") -Name '(default)').'(default)'
@@ -760,7 +779,7 @@ Begin {
                     ) | 
                     Select-String -Pattern '^PrivateSetting_GadgetName=' | ForEach-Object {
 
-                            [pscustomobject]@{
+                            New-Object -Type pscustomobject -Property @{
                                 Path = Join-Path -Path (Split-Path -Path $($env:AppData) -Parent) -ChildPath 'Local\Microsoft\Windows Sidebar\Settings.ini'
                                 Item = [string]::Empty
                                 Value = ($_.Line -split '=' | Select-Object -Last 1) -replace '%5C','\' -replace '%20',' '
@@ -787,7 +806,7 @@ Begin {
 	            }
 	
                 # Exefile
-                [pscustomobject]@{
+                New-Object -Type pscustomobject -Property @{
                     Path = 'HKLM:\SOFTWARE\Classes\Exefile\Shell\Open\Command'
                     Item = 'exefile'
                     Value = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Classes\Exefile\Shell\Open\Command' -Name '(default)').'(default)'
@@ -796,7 +815,7 @@ Begin {
 	
 	            '.exe','.cmd' | Foreach-Object {
 		            $assoc = (Get-ItemProperty -Path "HKLM:\Software\Classes\$($_)" -Name '(default)').'(default)'
-                    [pscustomobject]@{
+                    New-Object -Type pscustomobject -Property @{
                         Path = "HKLM:\Software\Classes\$assoc\shell\open\command"
                         Item = $_ 
                         Value = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Classes\$assoc\Shell\Open\Command" -Name '(default)').'(default)'
@@ -805,7 +824,7 @@ Begin {
 	            }
 
                 # Htmlfile
-                [pscustomobject]@{
+                New-Object -Type pscustomobject -Property @{
                     Path = 'HKLM:\SOFTWARE\Classes\htmlfile\shell\open\command'
                     Item = 'htmlfile'
                     Value = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Classes\htmlfile\shell\open\command' -Name '(default)').'(default)'
@@ -819,7 +838,7 @@ Begin {
 	
                 # Exefile
                 if (Test-Path -Path 'HKCU:\SOFTWARE\Classes\Exefile\Shell\Open\Command') {
-                    [pscustomobject]@{
+                    New-Object -Type pscustomobject -Property @{
                         Path = 'HKCU:\SOFTWARE\Classes\Exefile\Shell\Open\Command'
                         Item = 'exefile'
                         Value = (Get-ItemProperty -Path 'HKCU:\SOFTWARE\Classes\Exefile\Shell\Open\Command' -Name '(default)').'(default)'
@@ -831,7 +850,7 @@ Begin {
                     if (Test-Path -Path "HKCU:\Software\Classes\$($_)") {
 		                $assoc = (Get-ItemProperty -Path "HKCU:\Software\Classes\$($_)" -Name '(default)'-ErrorAction SilentlyContinue).'(default)'
                         if ($assoc) {
-                            [pscustomobject]@{
+                            New-Object -Type pscustomobject -Property @{
                                 Path = "HKCU:\Software\Classes\$assoc\shell\open\command"
                                 Item = $_ 
                                 Value = (Get-ItemProperty -Path "HKCU:\SOFTWARE\Classes\$assoc\Shell\Open\Command" -Name '(default)' -ErrorAction SilentlyContinue).'(default)'
@@ -843,7 +862,7 @@ Begin {
 
                 # Htmlfile
                 if (Test-Path -Path 'HKCU:\SOFTWARE\Classes\htmlfile\shell\open\command') {
-                    [pscustomobject]@{
+                    New-Object -Type pscustomobject -Property @{
                         Path = 'HKCU:\SOFTWARE\Classes\htmlfile\shell\open\command'
                         Item = 'htmlfile'
                         Value = (Get-ItemProperty -Path 'HKCU:\SOFTWARE\Classes\htmlfile\shell\open\command' -Name '(default)').'(default)'
@@ -864,7 +883,7 @@ Begin {
                     $key = "HKLM:\SOFTWARE\$($_)\Microsoft\Windows\CurrentVersion\Explorer\Browser Helper Objects"
                     if (Test-Path -Path $key -PathType Container) {
                         (Get-Item -Path $key).GetSubKeyNames() | ForEach-Object -Process {
-                            [pscustomobject]@{
+                            New-Object -Type pscustomobject -Property @{
                                 Path = $key
                                 Item = $_
                                 Value = (Get-ItemProperty -Path (Join-Path -Path $ClassesPath -ChildPath "$($_)\InprocServer32") -Name '(default)').'(default)'
@@ -885,7 +904,7 @@ Begin {
                     $key = "HKLM:\SOFTWARE\$($_)\Microsoft\Internet Explorer\Explorer Bars"
                     try {
                         (Get-Item -Path $key -ErrorAction Stop).GetSubKeyNames() | ForEach-Object -Process {
-                            [pscustomobject]@{
+                            New-Object -Type pscustomobject -Property @{
                                 Path = $key
                                 Item = $_
                                 Value = (Get-ItemProperty -Path (Join-Path -Path $ClassesPath -ChildPath "$($_)\InprocServer32") -Name '(default)').'(default)'
@@ -915,7 +934,7 @@ Begin {
                 $key = 'HKCU:\Software\Microsoft\Internet Explorer\UrlSearchHooks'
                 if (Test-Path -Path $key -PathType Container) {
                     (Get-Item -Path $key).GetValueNames() | ForEach-Object -Process {
-                        [pscustomobject]@{
+                        New-Object -Type pscustomobject -Property @{
                             Path = $key
                             Item = $_
                             Value = (Get-ItemProperty -Path (Join-Path -Path $ClassesPath -ChildPath "$($_)\InprocServer32") -Name '(default)').'(default)'
@@ -930,7 +949,7 @@ Begin {
                     $key = "HKCU:\SOFTWARE\$($_)\Microsoft\Internet Explorer\Explorer Bars"
                     if (Test-Path -Path $key -PathType Container) {
                         (Get-Item -Path $key).GetSubKeyNames() | ForEach-Object -Process {
-                            [pscustomobject]@{
+                            New-Object -Type pscustomobject -Property @{
                                 Path = $key
                                 Item = $_
                                 Value = (Get-ItemProperty -Path (Join-Path -Path $ClassesPath -ChildPath "$($_)\InprocServer32") -Name '(default)').'(default)'
@@ -972,7 +991,7 @@ Begin {
                 if (Test-Path -Path $key -PathType Container) {
 		            (Get-Item -Path $key).GetSubKeyNames() | ForEach-Object -Process {
                         try {
-                            [pscustomobject]@{
+                            New-Object -Type pscustomobject -Property @{
                                 Path = $key
                                 Item = $_
                                 Value = (Get-ItemProperty -Path (Join-Path -Path $key -ChildPath $_) -Name 'DllName' -ErrorAction Stop).'DllName'
@@ -1041,7 +1060,7 @@ Begin {
                         $header = (Get-Content -Path $($_.FullName) -Encoding Byte -ReadCount 1 -TotalCount 2) -as [string]
                         Switch ($header) {
                             '77 90' {
-                                [pscustomobject]@{
+                                New-Object -Type pscustomobject -Property @{
                                     Path = "$($env:systemdrive)\ProgramData\Microsoft\Windows\Start Menu\Programs\Startup"
                                     Item = $File.Name
                                     Value = $File.FullName
@@ -1051,7 +1070,7 @@ Begin {
                             }
                             '76 0' {
                                 $shortcut = $Wsh.CreateShortcut($File.FullName)
-                                [pscustomobject]@{
+                                New-Object -Type pscustomobject -Property @{
                                     Path = "$($env:systemdrive)\ProgramData\Microsoft\Windows\Start Menu\Programs\Startup"
                                     Item = $File.Name
                                     Value = "$($shortcut.TargetPath) $($shortcut.Arguments)"
@@ -1112,7 +1131,7 @@ Begin {
                         $header = (Get-Content -Path $($_.FullName) -Encoding Byte -ReadCount 1 -TotalCount 2) -as [string]
                         Switch ($header) {
                             '77 90' {
-                                [pscustomobject]@{
+                                New-Object -Type pscustomobject -Property @{
                                     Path = "$($env:AppData)\Microsoft\Windows\Start Menu\Programs\Startup"
                                     Item = $File.Name
                                     Value = $File.FullName
@@ -1122,7 +1141,7 @@ Begin {
                             }
                             '76 0' {
                                 $shortcut = $Wsh.CreateShortcut($File.FullName)
-                                [pscustomobject]@{
+                                New-Object -Type pscustomobject -Property @{
                                     Path = "$($env:AppData)\Microsoft\Windows\Start Menu\Programs\Startup"
                                     Item = $File.Name
                                     Value = "$($shortcut.TargetPath) $($shortcut.Arguments)"
@@ -1173,7 +1192,7 @@ Begin {
                 $null,'64' | ForEach-Object -Process {
                     $key = "HKLM:\System\CurrentControlSet\Services\WinSock2\Parameters\Protocol_Catalog9\Catalog_Entries$($_)"
                     (Get-Item -Path $key).GetSubKeyNames() | ForEach-Object -Process {
-                        [pscustomobject]@{
+                        New-Object -Type pscustomobject -Property @{
                             Path = "$key\$($_)"
                             Item = 'PackedCatalogItem'
                             Value = ((New-Object -TypeName System.Text.ASCIIEncoding).GetString(
@@ -1214,7 +1233,7 @@ Begin {
 	            $key = 'HKLM:\Software\Classes\Filter'
                 if (Test-Path -Path $key -PathType Container) {
 		            (Get-Item -Path $key).GetSubKeyNames() | ForEach-Object -Process {
-                        [pscustomobject]@{
+                        New-Object -Type pscustomobject -Property @{
                             Path = $key
                             Item = $_
                             Value = (Get-ItemProperty -Path (Join-Path -Path 'HKLM:\SOFTWARE\Classes\CLSID' -ChildPath "$($_)\InprocServer32") -Name '(default)' -ErrorAction SilentlyContinue).'(default)'
@@ -1233,7 +1252,7 @@ Begin {
                         if (Test-Path -Path $key -PathType Container) {
 			                (Get-Item -Path $key).GetSubKeyNames() | ForEach-Object -Process {
                                 try {
-	                                [pscustomobject]@{
+	                                New-Object -Type pscustomobject -Property @{
 	                                    Path = $key
 	                                    Item = $_
                                         Value = (Get-ItemProperty -Path (Join-Path -Path $clsidp -ChildPath "$($_)\InprocServer32") -Name '(default)' -ErrorAction Stop).'(default)'
@@ -1258,7 +1277,7 @@ Begin {
 	            $key = 'HKCU:\Software\Classes\Filter'
                 if (Test-Path -Path $key -PathType Container) {
 		            (Get-Item -Path $key).GetSubKeyNames() | ForEach-Object -Process {
-                        [pscustomobject]@{
+                        New-Object -Type pscustomobject -Property @{
                             Path = $key
                             Item = $_
                             Value = (Get-ItemProperty -Path (Join-Path -Path 'HKCU:\SOFTWARE\Classes\CLSID' -ChildPath "$($_)\InprocServer32") -Name '(default)' -ErrorAction SilentlyContinue).'(default)'
@@ -1276,7 +1295,7 @@ Begin {
                         if (Test-Path -Path $key -PathType Container) {
 			                (Get-Item -Path $key).GetSubKeyNames() | ForEach-Object -Process {
                                 try {
-	                                [pscustomobject]@{
+	                                New-Object -Type pscustomobject -Property @{
 	                                    Path = $key
 	                                    Item = $_
 	                                    Value = (Get-ItemProperty -Path (Join-Path -Path 'HKCU:\SOFTWARE\Classes\CLSID' -ChildPath "$($_)\InprocServer32") -Name '(default)' -ErrorAction Stop).'(default)'
@@ -1312,7 +1331,7 @@ Begin {
                                     # Iterate through the Addins names
                                     (Get-item -Path $key).GetSubKeyNames() | ForEach-Object {
                                         try {
-	                                        [pscustomobject]@{
+	                                        New-Object -Type pscustomobject -Property @{
 	                                            Path = $key
 	                                            Item = $_
 	                                            Value = $(
@@ -1342,7 +1361,7 @@ Begin {
                     $key = "$($root):\SOFTWARE\Microsoft\Office test\Special\Perf"
                     if (Test-Path "$($root):\SOFTWARE\Microsoft\Office test\Special\Perf") {
                         if ((Get-ItemProperty -Path "$($root):\SOFTWARE\Microsoft\Office test\Special\Perf" -Name '(default)' -ErrorAction SilentlyContinue).'(default)') {
-	                        [pscustomobject]@{
+	                        New-Object -Type pscustomobject -Property @{
 	                            Path = $key
 	                            Item = '(default)'
                                 Value = (Get-ItemProperty -Path "$($root):\SOFTWARE\Microsoft\Office test\Special\Perf" -Name '(default)' -ErrorAction SilentlyContinue).'(default)'
@@ -1376,7 +1395,7 @@ Begin {
 		            $item = $_
                     (Get-RegValue -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' -Name $_ @Category).Value | ForEach-Object {
                         if ($_ -ne '""') {
-                            [pscustomobject]@{
+                            New-Object -Type pscustomobject -Property @{
                                 Path = 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa'
                                 Item = $item
                                 Value = $_
@@ -1389,7 +1408,7 @@ Begin {
                 # HKLM\SYSTEM\CurrentControlSet\Control\Lsa\OSConfig\Security Packages
                 if (Test-Path -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\OSConfig' -PathType Container) {
                     (Get-RegValue -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\OSConfig' -Name 'Security Packages'  @Category).Value | ForEach-Object {
-                        [pscustomobject]@{
+                        New-Object -Type pscustomobject -Property @{
                             Path = 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\OSConfig'
                             Item = 'Security Packages'
                             Value = $_
@@ -1447,27 +1466,27 @@ Begin {
                 Get-AllScheduledTask | Get-Task | ForEach-Object {
                     $Value = $null
                     $Value = if (
-                        ($node = ([xml]$_.XML).Task.get_ChildNodes() | Where-Object Name -eq 'Actions' ).HasChildNodes
+                        ($node = ([xml]$_.XML).Task.get_ChildNodes() | Where-Object { $_.Name -eq 'Actions'} ).HasChildNodes
                     ) {
                         # $node can have Exec or comHandler or both childs (ex: MediaCenter tasks)
-                        switch ($node.get_ChildNodes().Name) {
+                        switch ($($node.get_ChildNodes()).Name) {
                             Exec {
                                 $subnode = ($node.get_ChildNodes() | Where-Object { $_.Name -eq 'Exec'})
-                                if ($subnode.get_ChildNodes() | Where-Object Name -eq 'Arguments' | Select-Object -ExpandProperty '#text') {
-                                    '{0} {1}' -f ($subnode.get_ChildNodes() | Where-Object Name -eq 'Command' | Select-Object -ExpandProperty '#text'), 
-                                    ($subnode.get_ChildNodes() | Where-Object Name -eq 'Arguments' | Select-Object -ExpandProperty '#text');
+                                if ($subnode.get_ChildNodes() | Where-Object { $_.Name -eq 'Arguments'} | Select-Object -ExpandProperty '#text') {
+                                    '{0} {1}' -f ($subnode.get_ChildNodes() | Where-Object { $_.Name -eq 'Command'} | Select-Object -ExpandProperty '#text'), 
+                                    ($subnode.get_ChildNodes() | Where-Object { $_.Name -eq 'Arguments'} | Select-Object -ExpandProperty '#text');
                                 } else {
-                                    $subnode.get_ChildNodes() | Where-Object Name -eq 'Command' | Select-Object -ExpandProperty '#text' ; 
+                                    $subnode.get_ChildNodes() | Where-Object { $_.Name -eq 'Command'} | Select-Object -ExpandProperty '#text' ; 
                                 }
                                 break;
                             }
                             ComHandler {
                                 $subnode = ($node.get_ChildNodes() | Where-Object { $_.Name -eq 'ComHandler'})
-                                if ($subnode.get_ChildNodes()| Where-Object Name -eq 'Data' | Select-Object -ExpandProperty InnerText) {
-                                    '{0} {1}'-f ($subnode.get_ChildNodes() | Where-Object Name -eq 'ClassId' | Select-Object -ExpandProperty '#text'),
-                                    ($subnode.get_ChildNodes() | Where-Object Name -eq 'Data' | Select-Object -ExpandProperty InnerText); 
+                                if ($subnode.get_ChildNodes()| Where-Object { $_.Name -eq 'Data'} | Select-Object -ExpandProperty InnerText) {
+                                    '{0} {1}'-f ($subnode.get_ChildNodes() | Where-Object { $_.Name -eq 'ClassId'} | Select-Object -ExpandProperty '#text'),
+                                    ($subnode.get_ChildNodes() | Where-Object { $_.Name -eq 'Data'} | Select-Object -ExpandProperty InnerText); 
                                 } else {
-                                    $subnode.get_ChildNodes() | Where-Object Name -eq 'ClassId' | Select-Object -ExpandProperty '#text'; 
+                                    $subnode.get_ChildNodes() | Where-Object { $_.Name -eq 'ClassId'} | Select-Object -ExpandProperty '#text'; 
                                 }
                                 break;
                             }
@@ -1475,7 +1494,7 @@ Begin {
                         }
                     }
 
-                    [pscustomobject]@{
+                    New-Object -Type pscustomobject -Property @{
                         Path = (Join-Path -Path "$($env:systemroot)\system32\Tasks" -ChildPath "$($_.Path)\$($_.Name)") ;
                         Item = $_.Name
                         Value =  $Value ;
@@ -1494,7 +1513,7 @@ Begin {
 	            'Credential Providers','Credential Provider Filters','PLAP Providers' | ForEach-Object {
 		            $key = Join-Path -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication' -ChildPath $_
 		            (Get-Item -Path $key).GetSubKeyNames() | ForEach-Object -Process {
-                        [pscustomobject]@{
+                        New-Object -Type pscustomobject -Property @{
                             Path = $key
                             Item = $_
                             Value = (Get-ItemProperty -Path (Join-Path -Path 'HKLM:\SOFTWARE\Classes\CLSID' -ChildPath "$($_)\InprocServer32") -Name '(default)' -ErrorAction SilentlyContinue).'(default)'
@@ -1546,7 +1565,7 @@ Begin {
                 # Permanent events
                 Get-WMIObject -Namespace root\Subscription -Class __EventConsumer -ErrorAction SilentlyContinue| Where-Object { $_.__CLASS -eq 'ActiveScriptEventConsumer' } | ForEach-Object {
                     if ($_.ScriptFileName) {
-                        [pscustomobject]@{
+                        New-Object -Type pscustomobject -Property @{
                             Path = $_.__PATH ;
                             Item = $_.Name
                             Value =  $_.ScriptFileName ;
@@ -1554,7 +1573,7 @@ Begin {
                         }
                     
                     } elseif ($_.ScriptText) {
-                        [pscustomobject]@{
+                        New-Object -Type pscustomobject -Property @{
                             Path = $_.__PATH ;
                             Item = $_.Name
                             Value =  $null ;
@@ -1564,7 +1583,7 @@ Begin {
                 }
 
                 Get-WMIObject -Namespace root\Subscription -Class __EventConsumer -ErrorAction SilentlyContinue| Where-Object { $_.__CLASS -eq 'CommandlineEventConsumer' } | ForEach-Object {
-                        [pscustomobject]@{
+                        New-Object -Type pscustomobject -Property @{
                             Path = $_.__PATH ;
                             Item = $_.Name
                             Value =  "$($_.WorkingDirectory)$($_.ExecutablePath)" ;# $($_.CommandLineTemplate)" ;
@@ -1581,13 +1600,18 @@ Begin {
     Function Get-PSPrettyAutorun {
         [CmdletBinding()]
         Param(
-            [Parameter(Mandatory,ValueFromPipeLine)]
+            [Parameter(Mandatory=$true,ValueFromPipeLine=$true)]
             [system.object[]]$RawAutoRun
         )
         Begin {}
         Process {
+			if (-NOT $RawAutoRun) {
+				# Handle nulls
+				continue
+			}
             $RawAutoRun | ForEach-Object {
                 $Item = $_
+				Write-Verbose "Found Autorun: [$($Item.Category)] $($Item.Value)"
                 Switch ($Item.Category) {
                     Task {
                         Write-Verbose -Message "Reading Task $($Item.Path)"
@@ -1595,8 +1619,8 @@ Begin {
                             Switch -Regex ($Item.Value ) {
                                 #GUID
                                 '^(\{)?[A-Za-z0-9]{4}([A-Za-z0-9]{4}\-?){4}[A-Za-z0-9]{12}(\})?' { 
-                                    # $clsid = ($_ -split '\s')[0]
-                                    $clsid = ([system.guid]::Parse( ($_ -split '\s')[0])).ToString('B')
+                                    $clsid = ($_ -split '\s')[0]
+                                    # $clsid = ([system.guid]::Parse( ($_ -split '\s')[0])).ToString('B')
                                     if (Test-Path (Join-Path -Path 'HKLM:\SOFTWARE\Classes\CLSID' -ChildPath "$($clsid)\InprocServer32") -PathType Container) {
                                         Write-Verbose -Message 'Reading from InprocServer32'
                                         (Get-ItemProperty -Path (Join-Path -Path 'HKLM:\SOFTWARE\Classes\CLSID' -ChildPath "$($clsid)\InprocServer32") -Name '(default)' -ErrorAction SilentlyContinue).'(default)' 
@@ -1617,7 +1641,7 @@ Begin {
                                 # Rundll32
                                 '^((%windir%|%(s|S)ystem(r|R)oot%)\\system32\\)?rundll32\.exe\s(/[a-z]\s)?.*,.*' {
                                     Join-Path -Path "$($env:systemroot)\system32" -ChildPath (
-                                        @([regex]'^((%windir%|%(s|S)ystem(r|R)oot%)\\system32\\)?rundll32\.exe\s(/[a-z]\s)?(%windir%\\system32\\)?(?<File>.*),').Matches($_) | 
+                                        ([regex]'^((%windir%|%(s|S)ystem(r|R)oot%)\\system32\\)?rundll32\.exe\s(/[a-z]\s)?(%windir%\\system32\\)?(?<File>.*),').Matches($_) | 
                                         Select-Object -Expand Groups | Select-Object -Last 1 | Select-Object -ExpandProperty Value
                                     )
                                     break
@@ -1625,7 +1649,7 @@ Begin {
                                 # Windir\system32
                                 '^(%windir%|%(s|S)ystem(r|R)oot%|C:\\[Ww][iI][nN][dD][oO][Ww][sS])\\(s|S)ystem32\\.*\.(exe|vbs)' {
                                     Join-Path -Path "$($env:systemroot)\system32" -ChildPath (
-                                        @([regex]'^(%windir%|%(s|S)ystem(r|R)oot%|C:\\[Ww][iI][nN][dD][oO][Ww][sS])\\(s|S)ystem32\\(?<File>.*\.(exe|vbs))(\s)?').Matches($_) | 
+                                        ([regex]'^(%windir%|%(s|S)ystem(r|R)oot%|C:\\[Ww][iI][nN][dD][oO][Ww][sS])\\(s|S)ystem32\\(?<File>.*\.(exe|vbs))(\s)?').Matches($_) | 
                                         Select-Object -Expand Groups | Select-Object -Last 1 | Select-Object -ExpandProperty Value
                                     )
                                     break
@@ -1633,7 +1657,7 @@ Begin {
                                 # windir\somethingelse
                                 '^(%windir%|%(s|S)ystem(r|R)oot%|C:\\[Ww][iI][nN][dD][oO][Ww][sS])\\.*\\.*\.(exe|vbs)' {
                                     Join-Path -Path "$($env:systemroot)" -ChildPath (
-                                        @([regex]'^(%windir%|%(s|S)ystem(r|R)oot%|C:\\[Ww][iI][nN][dD][oO][Ww][sS])\\(?<File>.*\\.*\.(exe|vbs))(\s)?').Matches($_) | 
+                                        ([regex]'^(%windir%|%(s|S)ystem(r|R)oot%|C:\\[Ww][iI][nN][dD][oO][Ww][sS])\\(?<File>.*\\.*\.(exe|vbs))(\s)?').Matches($_) | 
                                         Select-Object -Expand Groups | Select-Object -Last 1 | Select-Object -ExpandProperty Value
                                     )
                                     break
@@ -1642,7 +1666,7 @@ Begin {
                                 '^%SystemRoot%\\ehome\\.*\s' {
                                     # "$($env:systemroot)\ehome\ehrec.exe"
                                     Join-Path -Path "$($env:systemroot)\ehome" -ChildPath "$(
-                                        @([regex]'^%SystemRoot%\\ehome\\(?<FileName>.*)\s').Matches($_) | 
+                                        ([regex]'^%SystemRoot%\\ehome\\(?<FileName>.*)\s').Matches($_) | 
                                         Select-Object -Expand Groups | Select-Object -Last 1 | Select-Object -ExpandProperty Value
                                     ).exe"
                                     break
@@ -1650,7 +1674,7 @@ Begin {
                                 # ProgramFiles
                                 '^"?(C:\\Program\sFiles|%ProgramFiles%)\\' {
                                     Join-Path -Path "$($env:ProgramFiles)" -ChildPath (
-                                        @([regex]'^"?(C:\\Program\sFiles|%ProgramFiles%)\\(?<File>.*\.exe)("|\s)?').Matches($_) | 
+                                        ([regex]'^"?(C:\\Program\sFiles|%ProgramFiles%)\\(?<File>.*\.exe)("|\s)?').Matches($_) | 
                                         Select-Object -Expand Groups | Select-Object -Last 1 | Select-Object -ExpandProperty Value
                                     )                                        
                                     break
@@ -1658,7 +1682,7 @@ Begin {
                                 # ProgramFilesx86
                                 '^"?(C:\\Program\sFiles\s\(x86\)|%ProgramFiles\(x86\)%)\\' {
                                     Join-Path -Path "$(${env:ProgramFiles(x86)})" -ChildPath (
-                                        @([regex]'^"?(C:\\Program\sFiles\s\(x86\)|%ProgramFiles\(x86\)%)\\(?<File>.*\.exe)("|\s)?').Matches($_) | 
+                                        ([regex]'^"?(C:\\Program\sFiles\s\(x86\)|%ProgramFiles\(x86\)%)\\(?<File>.*\.exe)("|\s)?').Matches($_) | 
                                         Select-Object -Expand Groups | Select-Object -Last 1 | Select-Object -ExpandProperty Value
                                     )
                                     break
@@ -1677,7 +1701,7 @@ Begin {
                                 '[a-zA-Z0-9]*\.exe(\s)?' {
                                 # '[a-zA-Z0-9]*(\.exe\s)?' {
                                     Join-Path -Path "$($env:systemroot)\system32" -ChildPath "$(
-                                        @([regex]'^(?<FileName>[a-zA-Z0-9]*)(\.exe\s)?').Matches($_) |
+                                        ([regex]'^(?<FileName>[a-zA-Z0-9]*)(\.exe\s)?').Matches($_) |
                                         Select-Object -Expand Groups | Select-Object -Last 1 | Select-Object -ExpandProperty Value
                                         ).exe"
                                     break
@@ -1777,7 +1801,7 @@ Begin {
                                 }
                                 '^"?[A-Za-z]\\[Pp]rogram\s[fF]iles.*\\(?<FilePath>.*\\\.exe)\s?' {
                                     Join-Path -Path "$($env:ProgramFiles)" -ChildPath (
-                                        @([regex]'^"?[A-Za-z]\\[Pp]rogram\s[fF]iles.*\\(?<FilePath>.*\\\.exe)\s?').Matches($_) | 
+                                        ([regex]'^"?[A-Za-z]\\[Pp]rogram\s[fF]iles.*\\(?<FilePath>.*\\\.exe)\s?').Matches($_) | 
                                         Select-Object -Expand Groups | Select-Object -Last 1 | Select-Object -ExpandProperty Value
                                     )                                        
                                     break
@@ -1988,21 +2012,21 @@ Begin {
                             switch -Regex ($Item.Value) {
                             '^"?[A-Za-z]:\\[Ww][iI][nN][dD][oO][Ww][sS]\\' {
                                 Join-Path -Path "$($env:systemroot)" -ChildPath (
-                                    @([regex]'^"?[A-Za-z]:\\[Ww][iI][nN][dD][oO][Ww][sS]\\(?<FilePath>.*\.(exe|dll))\s?').Matches($_) | 
+                                    ([regex]'^"?[A-Za-z]:\\[Ww][iI][nN][dD][oO][Ww][sS]\\(?<FilePath>.*\.(exe|dll))\s?').Matches($_) | 
                                     Select-Object -Expand Groups | Select-Object -Last 1 | Select-Object -ExpandProperty Value
                                 )  
                                 break
                             }
                             '^"?[A-Za-z]:\\[Pp]rogram\s[fF]iles\\(?<FileName>.*\.[eE][xX][eE])\s?' {
                                 Join-Path -Path "$($env:ProgramFiles)" -ChildPath (
-                                    @([regex]'^"?[A-Za-z]:\\[Pp]rogram\s[fF]iles\\(?<FileName>.*\.[eE][xX][eE])\s?').Matches($_) | 
+                                    ([regex]'^"?[A-Za-z]:\\[Pp]rogram\s[fF]iles\\(?<FileName>.*\.[eE][xX][eE])\s?').Matches($_) | 
                                     Select-Object -Expand Groups | Select-Object -Last 1 | Select-Object -ExpandProperty Value
                                 )  
                                 break
                             }
                             '^"?[A-Za-z]:\\[Pp]rogram\s[fF]iles\s\(x86\)\\(?<FileName>.*\.[eE][xX][eE])\s?' {
                                 Join-Path -Path "$(${env:ProgramFiles(x86)})" -ChildPath (
-                                    @([regex]'^"?[A-Za-z]:\\[Pp]rogram\s[fF]iles\s\(x86\)\\(?<FileName>.*\.[eE][xX][eE])\s?').Matches($_) | 
+                                    ([regex]'^"?[A-Za-z]:\\[Pp]rogram\s[fF]iles\s\(x86\)\\(?<FileName>.*\.[eE][xX][eE])\s?').Matches($_) | 
                                     Select-Object -Expand Groups | Select-Object -Last 1 | Select-Object -ExpandProperty Value
                                 )  
                                 break
@@ -2070,17 +2094,20 @@ Begin {
         End {}
     }
 
-
     Function Add-PSAutoRunExtendedInfo {
         [CmdletBinding()]
         Param(
-            [Parameter(Mandatory,ValueFromPipeLine)]
+            [Parameter(Mandatory=$true,ValueFromPipeLine=$true)]
             [system.object[]]$RawAutoRun
         )
         Begin {}
         Process {
+			if (-NOT $RawAutoRun) {
+				# Handle nulls
+				continue
+			}
             $RawAutoRun | ForEach-Object {
-                $o = [pscustomobject]@{
+                $o = New-Object -Type PSCustomObject -Property @{
                         Path = $_.Path ;
                         Item = $_.Item ;
                         Category = $_.Category ;
@@ -2107,90 +2134,38 @@ Begin {
         }
         End{}
     }
+
     Function Add-PSAutoRunHash {
         [CmdletBinding()]
         Param(
-            [Parameter(Mandatory,ValueFromPipeLine)]
+            [Parameter(Mandatory=$true,ValueFromPipeLine=$true)]
             [system.object[]]$RawAutoRun,
             [Switch]$ShowFileHash
         )
         Begin {}
         Process {
+			if (-NOT $RawAutoRun) {
+				# Handle nulls
+				continue
+			}
             $RawAutoRun | ForEach-Object {
                 If ($ShowFileHash) {
-                    if ($_.ImagePath) {
-                        If (Test-Path -Path $($_.ImagePath) -PathType Leaf) {
-                            $_ | Add-Member -MemberType NoteProperty -Name MD5 -Value $(
-                                (Get-FileHash -Path $($_.ImagePath) -Algorithm MD5).Hash
-                            ) -Force -PassThru |
-                            Add-Member -MemberType NoteProperty -Name SHA1 -Value $(
-                                (Get-FileHash -Path $($_.ImagePath) -Algorithm SHA1).Hash
-                            ) -Force -PassThru |
-                            Add-Member -MemberType NoteProperty -Name SHA256 -Value $(
-                                (Get-FileHash -Path $($_.ImagePath) -Algorithm SHA256).Hash
-                            ) -Force -PassThru
-                        } else {
-                            $_ | Add-Member -MemberType NoteProperty -Name MD5 -Value $null -Force -PassThru |
-                            Add-Member -MemberType NoteProperty -Name SHA1 -Value $null -Force -PassThru |
-                            Add-Member -MemberType NoteProperty -Name SHA256 -Value $null -Force -PassThru
+					$_ | Add-Member -MemberType NoteProperty -Name MD5 -Value $null -Force
+					$_ | Add-Member -MemberType NoteProperty -Name SHA1 -Value $null -Force
+					$_ | Add-Member -MemberType NoteProperty -Name SHA256 -Value $null -Force
+					$ImagePath = $_.ImagePath
+                    if ($ImagePath) {
+                        If (Test-Path -Path $ImagePath -PathType Leaf) {
+							$_.MD5 = $(Get-FileHash -Path $ImagePath -Algorithm MD5).Hash
+							$_.SHA1 = $(Get-FileHash -Path $ImagePath -Algorithm SHA1).Hash
+							$_.SHA256 = $(Get-FileHash -Path $ImagePath -Algorithm SHA256).Hash
                         }
-                    } else {
-                        $_ | Add-Member -MemberType NoteProperty -Name MD5 -Value $null -Force -PassThru |
-                        Add-Member -MemberType NoteProperty -Name SHA1 -Value $null -Force -PassThru |
-                        Add-Member -MemberType NoteProperty -Name SHA256 -Value $null -Force -PassThru
                     }
-                } else {
-                    $_
                 }
+                Write-Output $_
             }
         }
         End {}
-    }
-
-    Function Add-PSAutoRunAuthentiCodeSignature {
-        [CmdletBinding()]
-        Param(
-            [Parameter(Mandatory,ValueFromPipeLine)]
-            [system.object[]]$RawAutoRun,
-            [Switch]$VerifyDigitalSignature
-        )
-        Begin {}
-        Process {
-            $RawAutoRun | ForEach-Object {
-                If ($VerifyDigitalSignature) {
-                    if ($_.ImagePath) {
-                        If (Test-Path -Path $_.ImagePath -PathType Leaf) {
-                            $_ | Add-Member -MemberType ScriptProperty -Name Signed -Value ({
-                                try {
-                                    $signature = Get-AuthenticodeSignature -FilePath $($this.ImagePath) -ErrorAction Stop
-                                    Switch ($signature.Status) {
-                                        'Valid' {
-                                            $true
-                                            break
-                                        }
-                                        'NotSigned' {
-                                            $false
-                                            break
-                                        }
-                                        default {
-                                            $false
-                                        }
-                                    }
-
-                                } catch {
-                                    $false
-                                }
-                            }) -Force -PassThru
-                        }
-                    } else {
-                        $_ | Add-Member -MemberType NoteProperty -Name Signed -Value $null -Force -PassThru
-                    }
-                } else {
-                    $_
-                }
-            }
-        }
-        End{}
     }
 
     #endregion Helperfunctions
@@ -2202,16 +2177,10 @@ Process {
     } else {
         $GetHash = $false
     }
-    if ($PSBoundParameters.ContainsKey('VerifyDigitalSignature')) {
-        $GetSig = $true
-    } else {
-        $GetSig = $false
-    }
     Get-PSRawAutoRun @PSBoundParameters | 
-    Get-PSPrettyAutorun | 
-    Add-PSAutoRunExtendedInfo |
-    Add-PSAutoRunHash -ShowFileHash:$GetHash |
-    Add-PSAutoRunAuthentiCodeSignature -VerifyDigitalSignature:$GetSig
+		Get-PSPrettyAutorun | 
+			Add-PSAutoRunExtendedInfo | 
+				Add-PSAutoRunHash -ShowFileHash:$GetHash
 }
 End {}
 }
