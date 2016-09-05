@@ -1,5 +1,6 @@
 AutoRuns PowerShell Module
 ==========================
 
-### AutoRuns module was designed to help do live incident response and enumerate autoruns artifacts that may be used by legitimate programs as well as malware to achieve persistence.
+This is basically the Powershell version of SysIntenal's Autoruns.  Forked to add backwards compatibility with Powershell 2.0 and CLR 2.0 for inclusion in the PSHunt Project.
 
+Known problems: Uses schedule.service com object to access scheduled tasks.  This com object doesn't exist on Win2k3.  Still works but Scheduled tasks will be missed.
